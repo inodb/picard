@@ -32,6 +32,8 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static picard.sam.markduplicates.util.ReadNameParsingUtils.getRapidDefaultReadNameRegexSplit;
+
 /**
  * Contains methods for finding optical duplicates.
  *
@@ -153,60 +155,6 @@ public class OpticalDuplicateFinder {
                 return false;
             }
         }
-    }
-
-
-    /**
-     * Single pass method to parse the read name for the default regex.  This will only insert the 2nd to the 4th
-     * tokens (inclusive).  It will also stop after the fifth token has been successfully parsed.
-     */
-    protected int getRapidDefaultReadNameRegexSplit(final String readName, final char delim, final int[] tokens) {
-        int tokensIdx = 0;
-        int prevIdx = 0;
-        for (int i = 0; i < readName.length(); i++) {
-            if (readName.charAt(i) == delim) {
-                if (1 < tokensIdx && tokensIdx < 5)
-                    tokens[tokensIdx] = rapidParseInt(readName.substring(prevIdx, i)); // only fill in 2-4 inclusive
-                tokensIdx++;
-                if (4 < tokensIdx) return tokensIdx; // early return, only consider the first five tokens
-                prevIdx = i + 1;
-            }
-        }
-        if (prevIdx < readName.length()) {
-            if (1 < tokensIdx && tokensIdx < 5)
-                tokens[tokensIdx] = rapidParseInt(readName.substring(prevIdx, readName.length())); // only fill in 2-4 inclusive
-            tokensIdx++;
-        }
-        return tokensIdx;
-    }
-
-    /**
-     * Very specialized method to rapidly parse a sequence of digits from a String up until the first
-     * non-digit character.
-     */
-    protected final int rapidParseInt(final String input) {
-        final int len = input.length();
-        int val = 0;
-        int i = 0;
-        boolean isNegative = false;
-
-        if (0 < len && '-' == input.charAt(0)) {
-            i = 1;
-            isNegative = true;
-        }
-
-        for (; i < len; ++i) {
-            final char ch = input.charAt(i);
-            if (Character.isDigit(ch)) {
-                val = (val * 10) + (ch - 48);
-            } else {
-                break;
-            }
-        }
-
-        if (isNegative) val = -val;
-
-        return val;
     }
 
     /**

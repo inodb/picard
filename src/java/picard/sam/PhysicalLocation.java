@@ -15,7 +15,7 @@
  *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * FITNESS FOR A PARTICULAR PURPOSE AND NON INFRINGEMENT. IN NO EVENT SHALL THE
  * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
@@ -25,9 +25,12 @@
 package picard.sam;
 
 import picard.PicardException;
+import picard.sam.markduplicates.util.OpticalDuplicateFinder;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static picard.sam.markduplicates.util.ReadNameParsingUtils.getRapidDefaultReadNameRegexSplit;
 
 /**
  * Contains class for figuring out the location of reads.
@@ -39,12 +42,14 @@ import java.util.regex.Pattern;
 
 /**
  * Small interface that provides access to the physical location information about a cluster.
- * All values should be defaulted to -1 if unavailable.  ReadGroup and Tile should only allow
- * non-zero positive integers, x and y coordinates may be negative.
+ * All values should be defaulted to -1 if unavailable.  Tile should only allow
+ * non-zero positive integers, x and y coordinates must be non-negative.
+ * This is different from OpticalDuplicateFinder.PhysicalLocation in that the x and y positions are ints, not shorts
+ * thus, they do not overflow within a HiSeqX tile.
  */
 public class PhysicalLocation {
 
-    public static final String DEFAULT_READ_NAME_REGEX = "[a-zA-Z0-9]+:[0-9]:([0-9]+):([0-9]+):([0-9]+).*".intern();
+    public static final String DEFAULT_READ_NAME_REGEX = OpticalDuplicateFinder.DEFAULT_READ_NAME_REGEX;
 
     private final String readNameRegex;
 
@@ -86,9 +91,7 @@ public class PhysicalLocation {
         if (this.readNameRegex == this.DEFAULT_READ_NAME_REGEX) {
             final int fields = getRapidDefaultReadNameRegexSplit(readName, ':', tmpLocationFields);
             if (!(fields == 5 || fields == 7)) {
-                throw new PicardException(String.format("Default READ_NAME_REGEX '%s' did not match read name '%s'.  " +
-                                "You may need to specify a READ_NAME_REGEX in order to correctly identify optical duplicates.  " +
-                                "Note that this message will not be emitted again even if other read names do not match the regex.",
+                throw new PicardException(String.format(" READ_NAME_REGEX '%s' did not match read name '%s'.  " ,
                         this.readNameRegex, readName));
             }
 
@@ -110,65 +113,8 @@ public class PhysicalLocation {
                 loc.setY(Integer.parseInt(m.group(3)));
                 return true;
             } else {
-                throw new PicardException(String.format("READ_NAME_REGEX '%s' did not match read name '%s'.  Your regex may not be correct.  " +
-                                "Note that this message will not be emitted again even if other read names do not match the regex.",
-                        this.readNameRegex, readName));
+                throw new PicardException(String.format("READ_NAME_REGEX '%s' did not match read name '%s'. ", this.readNameRegex, readName));
             }
         }
-    }
-
-    //TODO refactor this. code duplication within OpticalDuplicateFinder
-
-    /**
-     * Single pass method to parse the read name for the default regex.  This will only insert the 2nd to the 4th
-     * tokens (inclusive).  It will also stop after the fifth token has been successfully parsed.
-     */
-    static protected int getRapidDefaultReadNameRegexSplit(final String readName, final char delim, final int[] tokens) {
-        int tokensIdx = 0;
-        int prevIdx = 0;
-        for (int i = 0; i < readName.length(); i++) {
-            if (readName.charAt(i) == delim) {
-                if (1 < tokensIdx && tokensIdx < 5)
-                    tokens[tokensIdx] = rapidParseInt(readName.substring(prevIdx, i)); // only fill in 2-4 inclusive
-                tokensIdx++;
-                if (4 < tokensIdx) return tokensIdx; // early return, only consider the first five tokens
-                prevIdx = i + 1;
-            }
-        }
-        if (prevIdx < readName.length()) {
-            if (1 < tokensIdx && tokensIdx < 5)
-                tokens[tokensIdx] = rapidParseInt(readName.substring(prevIdx, readName.length())); // only fill in 2-4 inclusive
-            tokensIdx++;
-        }
-        return tokensIdx;
-    }
-
-    /**
-     * Very specialized method to rapidly parse a sequence of digits from a String up until the first
-     * non-digit character.
-     */
-    static protected int rapidParseInt(final String input) {
-        final int len = input.length();
-        int val = 0;
-        int i = 0;
-        boolean isNegative = false;
-
-        if (0 < len && '-' == input.charAt(0)) {
-            i = 1;
-            isNegative = true;
-        }
-
-        for (; i < len; ++i) {
-            final char ch = input.charAt(i);
-            if (Character.isDigit(ch)) {
-                val = (val * 10) + (ch - 48);
-            } else {
-                break;
-            }
-        }
-
-        if (isNegative) val = -val;
-
-        return val;
     }
 }

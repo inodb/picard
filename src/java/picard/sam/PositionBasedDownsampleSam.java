@@ -1,3 +1,27 @@
+/*
+ * The MIT License
+ *
+ * Copyright (c) 2015 The Broad Institute
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
 package picard.sam;
 
 import htsjdk.samtools.SAMFileWriter;
@@ -27,6 +51,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
 
+import static java.lang.Math.abs;
+import static java.lang.Math.round;
+
 /**
  * Class to randomly downsample a BAM file while respecting that we should either get rid
  * of both ends of a pair or neither end of the pair. In addition, this program uses the read-name
@@ -37,6 +64,11 @@ import java.util.Random;
  * This has been designed with Illumina MiSeq/HiSeq in mind.
  * <p/>
  * Finally, the code has been designed to simulate sequencing less as accurately as possible, not for getting an exact downsample fraction.
+ * In particular, since the reads may be distributed non-evenly within the lanes/tiles and due to the small and finite number of swathes in
+ * a tile, the resulting downsampling percentage will not be accurately
+ * determined by the input argument PROBABILITY.
+ *
+ * @author Yossi Farjoun
  */
 @CommandLineProgramProperties(
         usage = "Class to randomly downsample a BAM file while respecting that we should either get rid\n" +
@@ -44,12 +76,16 @@ import java.util.Random;
                 "and extracts the position within the tile from whence the read came from. THe downsampling is based on this position. \n" +
                 "results with the exact same input in the same order and with the same value for RANDOM_SEED will produce the same results.\n" +
                 "\n" +
-                "Caveat Emptor: This is technology and read-name dependent. if your read-names do not have coordinate information, or if your\n" +
+                "<it>Caveat Emptor</it>: This is technology and read-name dependent. if your read-names do not have coordinate information, or if your\n" +
                 "BAM contains reads from multiple technologies (flowcell versions, sequencing machines) this will not work properly. \n" +
-                "This has been designed with Illumina MiSeq/HiSeq in mind.\n" +
+                "This has been designed with Illumina sequencing in mind.\n" +
+                "Another caveat is that downsampling twice with this program can lead to surprising results. For example since this is effectively a " +
+                "projection, downsampling twice with the same arguments will yield the same results as downsampling once. " +
                 "\n" +
-                "Finally, the code has been designed to simulate sequencing less as accurately as possible, not for getting an exact downsample fraction.  ",
-        usageShort = "Down-sample a SAM or BAM file to retain a random subset of the reads based on the reads location in each tile in the flowcell",
+                "Finally, the code has been designed to simulate sequencing less as accurately as possible, not for getting an exact downsample fraction. " +
+                "In particular, since the reads may be distributed non-evenly within the lanes/tiles and due to the small and finite number of swathes in a tile, the resulting downsampling percentage will not be accurately" +
+                "determined by the input argument PROBABILITY.",
+        usageShort = "Down-sample a SAM or BAM file to retain a random subset of the reads based on the reads location in each tile in the flowcell.",
         programGroup = SamOrBam.class
 )
 public class PositionBasedDownsampleSam extends CommandLineProgram {
@@ -60,26 +96,29 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
     @Option(shortName = StandardOptionDefinitions.OUTPUT_SHORT_NAME, doc = "The output, downsampled, SAM or BAM file to write.")
     public File OUTPUT;
 
-    @Option(shortName = "MS", doc = "If not null, the output file for the metrics file.")
-    public File METRICS_OUTPUT;
+    @Option(shortName = "MS", doc = "If not null, the output file for the metrics file.", optional = true)
+    public File METRICS_OUTPUT = null;
 
-    @Option(shortName = "RS", doc = "Random seed to use if reproducibilty is desired.  " +
+    @Option(shortName = "RS", doc = "Random seed to use if reproducibility is desired.  " +
             "Setting to null will cause multiple invocations to produce different results.")
     public Long RANDOM_SEED = 1L;
 
     @Option(shortName = "P", doc = "The probability of keeping any individual swath in the tiles, between 0 and 1.")
     public double PROBABILITY = 1;
 
-    @Option(doc = "Number of swathes into which to cut-up each tile in the x-direction.", optional = true)
-    public Short SWATHES_X = 30;
+    @Option(doc = "Number of swathes into which to cut-up each tile in the x-direction. Should be between 25 and 100.", optional = true)
+    public Short SWATHES_X = 31;
 
-    @Option(doc = "Number of swathes into which to cut-up each tile in the y-direction.", optional = true)
-    public Short SWATHES_Y = 30;
+    @Option(doc = "Number of swathes into which to cut-up each tile in the y-direction. Should be between 25 and 100.", optional = true)
+    public Short SWATHES_Y = 31;
 
     @Option(doc = "Stop after processing N reads, mainly for debugging.")
     public long STOP_AFTER = 0;
 
     private final Log log = Log.getInstance(PositionBasedDownsampleSam.class);
+
+    //the resulting (approximate) probability of keeping a read after rounding due to finiteness of swathes
+    private double effectiveP;
 
     public static void main(final String[] args) {
         new PositionBasedDownsampleSam().instanceMainWithExit(args);
@@ -87,10 +126,16 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
 
     private PhysicalLocation opticalDuplicateFinder;
 
-    //max-position in tile as a function of tile. we might need to
+    private long total = 0;
+    private long kept = 0;
+    Map<Key, Boolean> decisionMap;
+
+    //max-position in tile as a function of tile. We might need to
     //look per-readgroup, but at this point I'm making the assumptions that I need to downsample a
     //sample where all the readgroups came from the same type of flowcell.
     private Map<Short, Coord> tileMaxCoord;
+    final Map<Short, Histogram<Short>> xPositions = new HashMap<Short, Histogram<Short>>();
+    final Map<Short, Histogram<Short>> yPositions = new HashMap<Short, Histogram<Short>>();
 
     @Override
     protected int doWork() {
@@ -101,29 +146,49 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
         tileMaxCoord = new HashMap<Short, Coord>();
         opticalDuplicateFinder = new PhysicalLocation();
 
-
+        //decide which swathes of all the tiles to keep
         log.info("Randomizing swathes.");
-        final Map<Key, Boolean> decisionMap = makeDecisionMap();
+        decisionMap = makeDecisionMap();
 
-        log.debug("decision map made ");
-        for(final Map.Entry<Key,Boolean> entry : decisionMap.entrySet()){
-            log.debug(String.format("(%d,%d) = %b",entry.getKey().x,entry.getKey().y,entry.getValue()));
+        //if the relative difference between the requested probability and the effective predicted probability is greater than 20%,
+        //issue a warning
+        if (abs(effectiveP - PROBABILITY) / (Math.min(effectiveP, PROBABILITY) + 1e-10) > .2) {
+            log.warn(String.format("You've requested PROBABILITY=%g, but due to the finiteness of the swathes in the tiles it looks like the probability will be %f. " +
+                    "If this is a problem you can try increasing the SWATHES_X or SWATHES_Y parameters.", PROBABILITY, effectiveP));
         }
 
+        log.debug("decision map made ");
+        for (final Map.Entry<Key, Boolean> entry : decisionMap.entrySet()) {
+            log.debug(String.format("(%d,%d) = %b", entry.getKey().x, entry.getKey().y, entry.getValue()));
+        }
+
+        log.info("Starting first pass. Examining read distribution in tiles.");
         fillTileMaxCoord();
+        log.info("First pass done.");
 
-        log.info("Starting Second pass.");
+        log.info("Starting second pass. Outputting reads.");
+        outputRecs();
+        log.info("Second pass done. ");
 
-        long total = 0;
-        long kept = 0;
+        if (METRICS_OUTPUT != null) {
+            log.info("Outputting metrics");
+            outputMetrics();
+        }
+
+        final double finalP = kept / (double) total;
+        if (abs(finalP - PROBABILITY) / (Math.min(finalP, PROBABILITY) + 1e-10) > .2) {
+            log.warn(String.format("You've requested PROBABILITY=%g, the resulting downsampling resulted in an rate of %f. ", PROBABILITY, finalP));
+        }
+        log.info(String.format("Finished! Kept %d out of %d reads (P=%g).", kept, total, finalP));
+        return 0;
+    }
+
+    private void outputRecs() {
 
         final ProgressLogger progress = new ProgressLogger(log, (int) 1e7, "Read");
-
         final SamReader in = SamReaderFactory.makeDefault().referenceSequence(REFERENCE_SEQUENCE).open(INPUT);
         final SAMFileWriter out = new SAMFileWriterFactory().makeSAMOrBAMWriter(in.getFileHeader(), true, OUTPUT);
 
-        final Map<Short, Histogram<Short>> xPositions = new HashMap<Short, Histogram<Short>>();
-        final Map<Short, Histogram<Short>> yPositions = new HashMap<Short, Histogram<Short>>();
 
         for (final SAMRecord rec : in) {
             if (STOP_AFTER != 0 && total >= STOP_AFTER) break;
@@ -140,8 +205,8 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
             xPositions.get(pos.getTile()).increment(key.x);
             yPositions.get(pos.getTile()).increment(key.x);
 
-            if(!decisionMap.containsKey(key)){
-                final PicardException e = new PicardException("Missing Key in decision map: "+key);
+            if (!decisionMap.containsKey(key)) {
+                final PicardException e = new PicardException("Missing Key in decision map: " + key);
                 log.error(e);
                 throw e;
             }
@@ -157,33 +222,29 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
 
         out.close();
         CloserUtil.close(in);
-
-        if (METRICS_OUTPUT != null) {
-            try {
-                final BufferedWriter mout = new BufferedWriter(new FileWriter(METRICS_OUTPUT));
-                for (final Histogram<Short> histogram : xPositions.values()) {
-                    printHistogram(mout, histogram);
-                    mout.append("\n");
-                }
-                for (final Histogram<Short> histogram : yPositions.values()) {
-                    printHistogram(mout, histogram);
-                    mout.append("\n");
-                }
-
-                mout.flush();
-                mout.close();
-
-            } catch (final IOException e) {
-                log.error("error while writing to metrics file");
-                throw new PicardException("unknown error");
-            }
-        }
-
-        log.info("Finished! Kept " + kept + " out of " + total + " reads.");
-
-        return 0;
     }
 
+    private void outputMetrics() {
+        try {
+            final BufferedWriter out = new BufferedWriter(new FileWriter(METRICS_OUTPUT));
+            for (final Histogram<Short> histogram : xPositions.values()) {
+                printHistogram(out, histogram);
+                out.append("\n");
+            }
+            for (final Histogram<Short> histogram : yPositions.values()) {
+                printHistogram(out, histogram);
+                out.append("\n");
+            }
+
+            out.flush();
+            out.close();
+
+        } catch (final IOException e)
+        {
+            log.error("error while writing to metrics file");
+            throw new PicardException("unknown error");
+        }
+    }
 
     private void printHistogram(final BufferedWriter out, final Histogram<Short> histogram) throws IOException {
         final String SEPARATOR = "\t";
@@ -210,39 +271,55 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
         final Map<Key, Boolean> decisionMap = new HashMap<Key, Boolean>();
         final Random r = RANDOM_SEED == null ? new Random() : new Random(RANDOM_SEED);
 
+        int availableSwathes = SWATHES_X * SWATHES_Y;
+        int keptSwathes = 0;
+
+        final int requestedSwathes = (int) round(SWATHES_X * SWATHES_Y * PROBABILITY);
+
         // non-standard looping is on purpose since the last element is set to equal the first.
         for (short i = 0; i < SWATHES_X - 1; i++) {
             // non-standard looping is on purpose since the last element is set to equal the first.
             for (short j = 0; j < SWATHES_Y - 1; j++) {
-                final Boolean keepQ = r.nextDouble() <= PROBABILITY;
+                //we are aiming to keep exactly requestedSwathes. So the probability of keeping every
+                //swath depends on the number already kept (and the amount remaining to choose from).
+                //based on discussion in http://stackoverflow.com/questions/48087/
+
+                //due to the fact that some swathes count for 2 or 4 (edges and corners) it might fail for small values of PROBABILITY
+
+                final Boolean keepQ = r.nextDouble() <= (requestedSwathes - keptSwathes) / availableSwathes;
 
                 decisionMap.put(new Key(i, j), keepQ);
+                if (keepQ) keptSwathes++;
+                availableSwathes--;
                 //to emulate neighboring tiles having overlapping regions that can cause duplicates, we make sure that the
                 //swaths kept on the left/top are the same as the right/bottom
                 if (i == 0) {
                     decisionMap.put(new Key((short) (SWATHES_X - 1), j), keepQ);
+                    if (keepQ) keptSwathes++;
+                    availableSwathes--;
                     if (j == 0) {
                         decisionMap.put(new Key((short) (SWATHES_X - 1), (short) (SWATHES_Y - 1)), keepQ);
+                        if (keepQ) keptSwathes++;
+                        availableSwathes--;
                     }
                 }
                 if (j == 0) {
                     decisionMap.put(new Key(i, (short) (SWATHES_Y - 1)), keepQ);
+                    if (keepQ) keptSwathes++;
+                    availableSwathes--;
                 }
             }
         }
-        int totalKeeps=0;
-        for(final Boolean keep: decisionMap.values()){
-            if(keep) totalKeeps++;
-        }
 
-        log.info(String.format("Swath mask has %d entries, of which %d will be kept. The effective downsampling ratio is %g", decisionMap.size(),totalKeeps, totalKeeps/(double)decisionMap.size()));
+        effectiveP = keptSwathes / (double) decisionMap.size();
+        log.info(String.format("Swath mask has %d entries, of which %d will be kept. The effective downsampling ratio is %g", decisionMap.size(), keptSwathes, effectiveP));
         return decisionMap;
     }
 
+    // scan all the tiles and find the largest coordinate (x & y) in that tile.
     private void fillTileMaxCoord() {
 
         final SamReader in = SamReaderFactory.makeDefault().referenceSequence(REFERENCE_SEQUENCE).open(INPUT);
-        log.info("first pass. examining read distribution in tiles.");
 
         final ProgressLogger progress = new ProgressLogger(log, (int) 1e7, "Read");
 
@@ -265,21 +342,20 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
                 maxPos.count++;
             }
         }
+
         // now that we know what the maximal number was, we should increase it a bit, to account for sampling error
-        //TODO: check math logic here.
         for (final Coord coord : tileMaxCoord.values()) {
-            coord.x *= (coord.count + 1d)/coord.count ;
-            coord.y *= (coord.count + 1d)/coord.count ;
+            coord.x *= (coord.count + 1d) / coord.count;
+            coord.y *= (coord.count + 1d) / coord.count;
         }
         CloserUtil.close(in);
 
-        log.info("first pass Done.");
     }
 
     private Key getKey(final PhysicalLocation pos) {
         final Coord maxCoord = tileMaxCoord.get(pos.getTile());
-        final short keyX = (short) Math.min(SWATHES_X-1, pos.getX() * SWATHES_X / maxCoord.x);
-        final short keyY = (short) Math.min(SWATHES_Y-1, pos.getY() * SWATHES_Y / maxCoord.y);
+        final short keyX = (short) Math.min(SWATHES_X - 1, pos.getX() * SWATHES_X / maxCoord.x);
+        final short keyY = (short) Math.min(SWATHES_Y - 1, pos.getY() * SWATHES_Y / maxCoord.y);
 
         return new Key(keyX, keyY);
     }
@@ -329,7 +405,7 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
 
         @Override
         public String toString() {
-            return String.format("(%d, %d)",x , y);
+            return String.format("(%d, %d)", x, y);
         }
     }
 }
