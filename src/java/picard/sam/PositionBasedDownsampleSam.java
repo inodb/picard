@@ -51,41 +51,45 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
 
-import static java.lang.Math.abs;
-import static java.lang.Math.round;
+import static java.lang.Math.*;
 
 /**
- * Class to randomly downsample a BAM file while respecting that we should either get rid
+ * Class to downsample a BAM file while respecting that we should either get rid
  * of both ends of a pair or neither end of the pair. In addition, this program uses the read-name
- * and extracts the position within the tile from whence the read came from. THe downsampling is based on this position.
- * <p/>
- * Caveat Emptor: This is technology and read-name dependent. if your read-names do not have coordinate information, or if your
+ * and extracts the position within the tile from whence the read came from. The downsampling is based on this position.
+ *
+ * Note 1: This is technology and read-name dependent. if your read-names do not have coordinate information, or if your
  * BAM contains reads from multiple technologies (flowcell versions, sequencing machines) this will not work properly.
  * This has been designed with Illumina MiSeq/HiSeq in mind.
- * <p/>
+ *
+ * Note 2: The downsampling is _not_ random. It is deterministically dependent on the position of the read within its tile. specifically,
+ * it draws out an ellipse that covers a PROBABILITY fraction of the area and each of the edges and uses this to determine whether to keep the
+ * record. Since reads with the same name have the same position (mates, secondary and supplemental alignments), the decision will be the same for all of them.
+ *
  * Finally, the code has been designed to simulate sequencing less as accurately as possible, not for getting an exact downsample fraction.
- * In particular, since the reads may be distributed non-evenly within the lanes/tiles and due to the small and finite number of swathes in
- * a tile, the resulting downsampling percentage will not be accurately
- * determined by the input argument PROBABILITY.
+ * In particular, since the reads may be distributed non-evenly within the lanes/tiles, the resulting downsampling percentage will not be accurately
+ * determined by the input argument PROBABILITY. One should re-MarkDuplicates after downsampling in order to "expose" the duplicates who's representative has
+ * been downsampled away.
  *
  * @author Yossi Farjoun
  */
 @CommandLineProgramProperties(
-        usage = "Class to randomly downsample a BAM file while respecting that we should either get rid\n" +
+        usage = "Class to downsample a BAM file while respecting that we should either get rid\n" +
                 "of both ends of a pair or neither end of the pair. In addition, this program uses the read-name \n" +
                 "and extracts the position within the tile from whence the read came from. THe downsampling is based on this position. \n" +
-                "results with the exact same input in the same order and with the same value for RANDOM_SEED will produce the same results.\n" +
+                "results with the exact same input will produce the same results.\n" +
                 "\n" +
-                "<it>Caveat Emptor</it>: This is technology and read-name dependent. if your read-names do not have coordinate information, or if your\n" +
+                "<it>Note 1</it>: This is technology and read-name dependent. if your read-names do not have coordinate information, or if your\n" +
                 "BAM contains reads from multiple technologies (flowcell versions, sequencing machines) this will not work properly. \n" +
-                "This has been designed with Illumina sequencing in mind.\n" +
-                "Another caveat is that downsampling twice with this program can lead to surprising results. For example since this is effectively a " +
-                "projection, downsampling twice with the same arguments will yield the same results as downsampling once. " +
+                "This has been designed with Illumina MiSeq/HiSeq in mind.\n" +
+                "<it>Note 2</it>: The downsampling is _not_ random. It is deterministically dependent on the position of the read within its tile." +
+                "<it>Note 3</it>: Downsampling twice with this program can lead to surprising results and is not supported." +
+                "<it>Note 4</it>: You should MarkDuplicates after downsampling." +
                 "\n" +
                 "Finally, the code has been designed to simulate sequencing less as accurately as possible, not for getting an exact downsample fraction. " +
-                "In particular, since the reads may be distributed non-evenly within the lanes/tiles and due to the small and finite number of swathes in a tile, the resulting downsampling percentage will not be accurately" +
+                "In particular, since the reads may be distributed non-evenly within the lanes/tiles, the resulting downsampling percentage will not be accurately" +
                 "determined by the input argument PROBABILITY.",
-        usageShort = "Down-sample a SAM or BAM file to retain a random subset of the reads based on the reads location in each tile in the flowcell.",
+        usageShort = "Down-sample a SAM or BAM file to retain a subset of the reads based on the reads location in each tile in the flowcell.",
         programGroup = SamOrBam.class
 )
 public class PositionBasedDownsampleSam extends CommandLineProgram {
@@ -96,39 +100,30 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
     @Option(shortName = StandardOptionDefinitions.OUTPUT_SHORT_NAME, doc = "The output, downsampled, SAM or BAM file to write.")
     public File OUTPUT;
 
-    @Option(shortName = "MS", doc = "If not null, the output file for the metrics file.", optional = true)
-    public File METRICS_OUTPUT = null;
+//    @Option(shortName = "MO", doc = "If not null, the output file for the metrics file.", optional = true)
+//    public File METRICS_OUTPUT = null;
 
-    @Option(shortName = "RS", doc = "Random seed to use if reproducibility is desired.  " +
-            "Setting to null will cause multiple invocations to produce different results.")
-    public Long RANDOM_SEED = 1L;
-
-    @Option(shortName = "P", doc = "The probability of keeping any individual swath in the tiles, between 0 and 1.")
+    @Option(shortName = "P", doc = "The (approximate) probability of keeping a read, between 0 and 1.")
     public double PROBABILITY = 1;
-
-    @Option(doc = "Number of swathes into which to cut-up each tile in the x-direction. Should be between 25 and 100.", optional = true)
-    public Short SWATHES_X = 31;
-
-    @Option(doc = "Number of swathes into which to cut-up each tile in the y-direction. Should be between 25 and 100.", optional = true)
-    public Short SWATHES_Y = 31;
 
     @Option(doc = "Stop after processing N reads, mainly for debugging.")
     public long STOP_AFTER = 0;
 
-    private final Log log = Log.getInstance(PositionBasedDownsampleSam.class);
+    @Option(doc ="Determines whether the duplicate tag should be reset since the downsampling requires re-marking duplicates.")
+    public boolean RESET_DUPLICATE_FLAG=true;
 
-    //the resulting (approximate) probability of keeping a read after rounding due to finiteness of swathes
-    private double effectiveP;
+    private final Log log = Log.getInstance(PositionBasedDownsampleSam.class);
 
     public static void main(final String[] args) {
         new PositionBasedDownsampleSam().instanceMainWithExit(args);
     }
 
+    SelectionCriterion selector = new SelectionCriterion(PROBABILITY);
+
     private PhysicalLocation opticalDuplicateFinder;
 
     private long total = 0;
     private long kept = 0;
-    Map<Key, Boolean> decisionMap;
 
     //max-position in tile as a function of tile. We might need to
     //look per-readgroup, but at this point I'm making the assumptions that I need to downsample a
@@ -141,26 +136,12 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
     protected int doWork() {
         IOUtil.assertFileIsReadable(INPUT);
         IOUtil.assertFileIsWritable(OUTPUT);
-        if (METRICS_OUTPUT != null) IOUtil.assertFileIsWritable(METRICS_OUTPUT);
+//        if (METRICS_OUTPUT != null) IOUtil.assertFileIsWritable(METRICS_OUTPUT);
 
         tileMaxCoord = new HashMap<Short, Coord>();
         opticalDuplicateFinder = new PhysicalLocation();
 
-        //decide which swathes of all the tiles to keep
-        log.info("Randomizing swathes.");
-        decisionMap = makeDecisionMap();
-
-        //if the relative difference between the requested probability and the effective predicted probability is greater than 20%,
-        //issue a warning
-        if (abs(effectiveP - PROBABILITY) / (Math.min(effectiveP, PROBABILITY) + 1e-10) > .2) {
-            log.warn(String.format("You've requested PROBABILITY=%g, but due to the finiteness of the swathes in the tiles it looks like the probability will be %f. " +
-                    "If this is a problem you can try increasing the SWATHES_X or SWATHES_Y parameters.", PROBABILITY, effectiveP));
-        }
-
-        log.debug("decision map made ");
-        for (final Map.Entry<Key, Boolean> entry : decisionMap.entrySet()) {
-            log.debug(String.format("(%d,%d) = %b", entry.getKey().x, entry.getKey().y, entry.getValue()));
-        }
+        selector = new SelectionCriterion(PROBABILITY);
 
         log.info("Starting first pass. Examining read distribution in tiles.");
         fillTileMaxCoord();
@@ -170,10 +151,10 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
         outputRecs();
         log.info("Second pass done. ");
 
-        if (METRICS_OUTPUT != null) {
-            log.info("Outputting metrics");
-            outputMetrics();
-        }
+//        if (METRICS_OUTPUT != null) {
+//            log.info("Outputting metrics");
+//            outputMetrics();
+//        }
 
         final double finalP = kept / (double) total;
         if (abs(finalP - PROBABILITY) / (Math.min(finalP, PROBABILITY) + 1e-10) > .2) {
@@ -196,24 +177,16 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
             total++;
 
             final PhysicalLocation pos = getSamRecordLocation(rec);
+
             if (!xPositions.containsKey(pos.getTile()))
                 xPositions.put(pos.getTile(), new Histogram<Short>(pos.getTile() + "-xpos", "count"));
             if (!yPositions.containsKey(pos.getTile()))
                 yPositions.put(pos.getTile(), new Histogram<Short>(pos.getTile() + "-ypos", "count"));
 
-            final Key key = getKey(pos);
-            xPositions.get(pos.getTile()).increment(key.x);
-            yPositions.get(pos.getTile()).increment(key.x);
-
-            if (!decisionMap.containsKey(key)) {
-                final PicardException e = new PicardException("Missing Key in decision map: " + key);
-                log.error(e);
-                throw e;
-            }
-
-            final boolean keeper = decisionMap.get(key);
+            final boolean keeper = selector.select(pos, tileMaxCoord.get(pos.getTile()));
 
             if (keeper) {
+                if(RESET_DUPLICATE_FLAG) rec.setDuplicateReadFlag(false);
                 out.addAlignment(rec);
                 ++kept;
             }
@@ -224,97 +197,47 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
         CloserUtil.close(in);
     }
 
-    private void outputMetrics() {
-        try {
-            final BufferedWriter out = new BufferedWriter(new FileWriter(METRICS_OUTPUT));
-            for (final Histogram<Short> histogram : xPositions.values()) {
-                printHistogram(out, histogram);
-                out.append("\n");
-            }
-            for (final Histogram<Short> histogram : yPositions.values()) {
-                printHistogram(out, histogram);
-                out.append("\n");
-            }
+//    private void outputMetrics() {
+//        try {
+//            final BufferedWriter out = new BufferedWriter(new FileWriter(METRICS_OUTPUT));
+//            for (final Histogram<Short> histogram : xPositions.values()) {
+//                printHistogram(out, histogram);
+//                out.append("\n");
+//            }
+//            for (final Histogram<Short> histogram : yPositions.values()) {
+//                printHistogram(out, histogram);
+//                out.append("\n");
+//            }
+//
+//            out.flush();
+//            out.close();
+//
+//        } catch (final IOException e) {
+//            log.error("error while writing to metrics file");
+//            throw new PicardException("unknown error");
+//        }
+//    }
 
-            out.flush();
-            out.close();
-
-        } catch (final IOException e)
-        {
-            log.error("error while writing to metrics file");
-            throw new PicardException("unknown error");
-        }
-    }
-
-    private void printHistogram(final BufferedWriter out, final Histogram<Short> histogram) throws IOException {
-        final String SEPARATOR = "\t";
-
-        final FormatUtil formatter = new FormatUtil();
-        // Output a header row
-        out.append(StringUtil.assertCharactersNotInString(histogram.getBinLabel(), '\t', '\n'));
-        out.append(SEPARATOR);
-        out.append(StringUtil.assertCharactersNotInString(histogram.getValueLabel(), '\t', '\n'));
-        out.newLine();
-
-        for (final Short key : histogram.keySet()) {
-            out.append(key.toString());
-            final Histogram<Short>.Bin bin = histogram.get(key);
-            final double value = (bin == null ? 0 : bin.getValue());
-
-            out.append(SEPARATOR);
-            out.append(formatter.format(value));
-            out.newLine();
-        }
-    }
-
-    private Map<Key, Boolean> makeDecisionMap() {
-        final Map<Key, Boolean> decisionMap = new HashMap<Key, Boolean>();
-        final Random r = RANDOM_SEED == null ? new Random() : new Random(RANDOM_SEED);
-
-        int availableSwathes = SWATHES_X * SWATHES_Y;
-        int keptSwathes = 0;
-
-        final int requestedSwathes = (int) round(SWATHES_X * SWATHES_Y * PROBABILITY);
-
-        // non-standard looping is on purpose since the last element is set to equal the first.
-        for (short i = 0; i < SWATHES_X - 1; i++) {
-            // non-standard looping is on purpose since the last element is set to equal the first.
-            for (short j = 0; j < SWATHES_Y - 1; j++) {
-                //we are aiming to keep exactly requestedSwathes. So the probability of keeping every
-                //swath depends on the number already kept (and the amount remaining to choose from).
-                //based on discussion in http://stackoverflow.com/questions/48087/
-
-                //due to the fact that some swathes count for 2 or 4 (edges and corners) it might fail for small values of PROBABILITY
-
-                final Boolean keepQ = r.nextDouble() <= (requestedSwathes - keptSwathes) / availableSwathes;
-
-                decisionMap.put(new Key(i, j), keepQ);
-                if (keepQ) keptSwathes++;
-                availableSwathes--;
-                //to emulate neighboring tiles having overlapping regions that can cause duplicates, we make sure that the
-                //swaths kept on the left/top are the same as the right/bottom
-                if (i == 0) {
-                    decisionMap.put(new Key((short) (SWATHES_X - 1), j), keepQ);
-                    if (keepQ) keptSwathes++;
-                    availableSwathes--;
-                    if (j == 0) {
-                        decisionMap.put(new Key((short) (SWATHES_X - 1), (short) (SWATHES_Y - 1)), keepQ);
-                        if (keepQ) keptSwathes++;
-                        availableSwathes--;
-                    }
-                }
-                if (j == 0) {
-                    decisionMap.put(new Key(i, (short) (SWATHES_Y - 1)), keepQ);
-                    if (keepQ) keptSwathes++;
-                    availableSwathes--;
-                }
-            }
-        }
-
-        effectiveP = keptSwathes / (double) decisionMap.size();
-        log.info(String.format("Swath mask has %d entries, of which %d will be kept. The effective downsampling ratio is %g", decisionMap.size(), keptSwathes, effectiveP));
-        return decisionMap;
-    }
+//    private void printHistogram(final BufferedWriter out, final Histogram<Short> histogram) throws IOException {
+//        final String SEPARATOR = "\t";
+//
+//        final FormatUtil formatter = new FormatUtil();
+//        // Output a header row
+//        out.append(StringUtil.assertCharactersNotInString(histogram.getBinLabel(), '\t', '\n'));
+//        out.append(SEPARATOR);
+//        out.append(StringUtil.assertCharactersNotInString(histogram.getValueLabel(), '\t', '\n'));
+//        out.newLine();
+//
+//        for (final Short key : histogram.keySet()) {
+//            out.append(key.toString());
+//            final Histogram<Short>.Bin bin = histogram.get(key);
+//            final double value = (bin == null ? 0 : bin.getValue());
+//
+//            out.append(SEPARATOR);
+//            out.append(formatter.format(value));
+//            out.newLine();
+//        }
+//    }
 
     // scan all the tiles and find the largest coordinate (x & y) in that tile.
     private void fillTileMaxCoord() {
@@ -352,21 +275,50 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
 
     }
 
-    private Key getKey(final PhysicalLocation pos) {
-        final Coord maxCoord = tileMaxCoord.get(pos.getTile());
-        final short keyX = (short) Math.min(SWATHES_X - 1, pos.getX() * SWATHES_X / maxCoord.x);
-        final short keyY = (short) Math.min(SWATHES_Y - 1, pos.getY() * SWATHES_Y / maxCoord.y);
-
-        return new Key(keyX, keyY);
-    }
-
     private PhysicalLocation getSamRecordLocation(final SAMRecord rec) {
         final PhysicalLocation pos = new PhysicalLocation();
         opticalDuplicateFinder.addLocationInformation(rec.getReadName(), pos);
         return pos;
     }
 
-    static private class Coord {
+
+    private class SelectionCriterion {
+
+        private final double radiusSquared;
+        private final double offset;
+        private final boolean positiveSelection;
+
+
+        SelectionCriterion(final double probablity) {
+            assert (probablity >= 0);
+            assert (probablity <= 1);
+
+            final double p;
+            if (probablity > 0.5) {
+                p = 1 - probablity;
+                positiveSelection = false;
+            } else {
+                p = probablity;
+                positiveSelection = true;
+            }
+            radiusSquared = p / PI; // thus the area is \pi r^2 = p.
+            offset = sqrt(radiusSquared - p * p / 4); //if used as the center of the circle (both x and y), this makes the overlap
+            //region with each of the boundaries of the unit square of length p
+        }
+
+        private double roundedPart(final double x) {return x - round(x);}
+
+        // this function checks to see if the location of the read is within the masking circle
+        private boolean select(final PhysicalLocation coord, final Coord tileMaxCoord) {
+
+            // r^2 = (x-x_0)^2 + (y-y_0)^2, where both x_0 and y_0 equal offset
+            final double distanceSquared = pow(roundedPart((coord.x / (double) tileMaxCoord.x) - offset), 2) + pow(roundedPart((coord.y / (double) tileMaxCoord.y) - offset), 2);
+
+            return (distanceSquared > radiusSquared) ^ positiveSelection;
+        }
+    }
+
+    private class Coord {
         public int x;
         public int y;
         public int count;
