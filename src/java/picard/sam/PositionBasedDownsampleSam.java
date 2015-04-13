@@ -146,7 +146,7 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
     @Override
     protected int doWork() {
 
-        tileMaxCoord = new CollectionUtil.DefaultingMap<>(new CollectionUtil.DefaultingMap.Factory<Coord, Short>() {
+        tileMaxCoord = new CollectionUtil.DefaultingMap<Short,Coord>(new CollectionUtil.DefaultingMap.Factory<Coord, Short>() {
             @Override
             public Coord make(final Short aShort) {
                 return new Coord();
