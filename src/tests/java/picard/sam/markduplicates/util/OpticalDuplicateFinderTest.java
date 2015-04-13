@@ -17,12 +17,12 @@ public class OpticalDuplicateFinderTest {
     public void testRapidParseInt() {
         final OpticalDuplicateFinder opticalDuplicateFinder = new OpticalDuplicateFinder();
         for (int i = -100; i < 100; i++) {
-            Assert.assertEquals(opticalDuplicateFinder.rapidParseInt(Integer.toString(i)), i);
+            Assert.assertEquals(ReadNameParsingUtils.rapidParseInt(Integer.toString(i)), i);
 
             // trailing characters
-            Assert.assertEquals(opticalDuplicateFinder.rapidParseInt(Integer.toString(i)+"A"), i);
-            Assert.assertEquals(opticalDuplicateFinder.rapidParseInt(Integer.toString(i)+"ACGT"), i);
-            Assert.assertEquals(opticalDuplicateFinder.rapidParseInt(Integer.toString(i)+".1"), i);
+            Assert.assertEquals(ReadNameParsingUtils.rapidParseInt(Integer.toString(i)+"A"), i);
+            Assert.assertEquals(ReadNameParsingUtils.rapidParseInt(Integer.toString(i)+"ACGT"), i);
+            Assert.assertEquals(ReadNameParsingUtils.rapidParseInt(Integer.toString(i)+".1"), i);
         }
     }
 
@@ -40,7 +40,7 @@ public class OpticalDuplicateFinderTest {
         if (2 < numFields) expectedFields[2] = 2;
         if (3 < numFields) expectedFields[3] = 3;
         if (4 < numFields) expectedFields[4] = 4;
-        Assert.assertEquals(opticalDuplicateFinder.getRapidDefaultReadNameRegexSplit(readName, ':', inputFields), numFields);
+        Assert.assertEquals(ReadNameParsingUtils.getRapidDefaultReadNameRegexSplit(readName, ':', inputFields), numFields);
         for (int i = 0; i < inputFields.length; i++) {
             Assert.assertEquals(inputFields[i], expectedFields[i]);
         }
