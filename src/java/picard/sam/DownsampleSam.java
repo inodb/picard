@@ -43,7 +43,7 @@ public class DownsampleSam extends CommandLineProgram {
             "Setting to null will cause multiple invocations to produce different results.")
     public Long RANDOM_SEED = 1L;
 
-    @Option(shortName = "P", doc = "The probability of keeping any individual read, between 0 and 1.")
+    @Option(shortName = StandardOptionDefinitions.PROBABILITY_SHORT_NAME, doc = "The probability of keeping any individual read, between 0 and 1.")
     public double PROBABILITY = 1;
 
     private final Log log = Log.getInstance(DownsampleSam.class);
