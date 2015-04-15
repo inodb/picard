@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-package picard.sam.markduplicates.util;
+package picard.sam.util;
 
 /**
  * Common functions for quickly parsing strings. Used for parsing the tile and coordinates from the read names

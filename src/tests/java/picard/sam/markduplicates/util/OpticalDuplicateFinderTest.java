@@ -3,7 +3,7 @@ package picard.sam.markduplicates.util;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 import org.testng.Assert;
-import picard.sam.markduplicates.util.OpticalDuplicateFinder;
+import picard.sam.util.ReadNameParsingUtils;
 
 /**
  * Tests for OpticalDuplicateFinder

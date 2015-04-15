@@ -25,14 +25,13 @@
 package picard.sam.markduplicates.util;
 
 import htsjdk.samtools.util.Log;
+import picard.sam.util.ReadNameParsingUtils;
 
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import static picard.sam.markduplicates.util.ReadNameParsingUtils.getRapidDefaultReadNameRegexSplit;
 
 /**
  * Contains methods for finding optical duplicates.
@@ -117,7 +116,7 @@ public class OpticalDuplicateFinder {
     public boolean addLocationInformation(final String readName, final PhysicalLocation loc) {
         // Optimized version if using the default read name regex (== used on purpose):
         if (this.readNameRegex == this.DEFAULT_READ_NAME_REGEX) {
-            final int fields = getRapidDefaultReadNameRegexSplit(readName, ':', tmpLocationFields);
+            final int fields = ReadNameParsingUtils.getRapidDefaultReadNameRegexSplit(readName, ':', tmpLocationFields);
             if (!(fields == 5 || fields == 7)) {
                 if (null != log && !this.warnedAboutRegexNotMatching) {
                     this.log.warn(String.format("Default READ_NAME_REGEX '%s' did not match read name '%s'.  " +

@@ -1,7 +1,7 @@
 /*
  * The MIT License
  *
- * Copyright (c) 2014 The Broad Institute
+ * Copyright (c) 2015 The Broad Institute
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,15 +22,13 @@
  * THE SOFTWARE.
  */
 
-package picard.sam;
+package picard.sam.util;
 
 import picard.PicardException;
 import picard.sam.markduplicates.util.OpticalDuplicateFinder;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import static picard.sam.markduplicates.util.ReadNameParsingUtils.getRapidDefaultReadNameRegexSplit;
 
 /**
  * Contains class for figuring out the location of reads.
@@ -89,7 +87,7 @@ public class PhysicalLocation {
     public boolean addLocationInformation(final String readName, final PhysicalLocation loc) {
         // Optimized version if using the default read name regex (== used on purpose):
         if (this.readNameRegex == this.DEFAULT_READ_NAME_REGEX) {
-            final int fields = getRapidDefaultReadNameRegexSplit(readName, ':', tmpLocationFields);
+            final int fields = ReadNameParsingUtils.getRapidDefaultReadNameRegexSplit(readName, ':', tmpLocationFields);
             if (!(fields == 5 || fields == 7)) {
                 throw new PicardException(String.format(" READ_NAME_REGEX '%s' did not match read name '%s'.  " ,
                         this.readNameRegex, readName));

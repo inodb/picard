@@ -24,8 +24,10 @@
 
 package picard.sam;
 
+import htsjdk.samtools.SAMFileHeader;
 import htsjdk.samtools.SAMFileWriter;
 import htsjdk.samtools.SAMFileWriterFactory;
+import htsjdk.samtools.SAMProgramRecord;
 import htsjdk.samtools.SAMRecord;
 import htsjdk.samtools.SamReader;
 import htsjdk.samtools.SamReaderFactory;
@@ -35,11 +37,14 @@ import htsjdk.samtools.util.Histogram;
 import htsjdk.samtools.util.IOUtil;
 import htsjdk.samtools.util.Log;
 import htsjdk.samtools.util.ProgressLogger;
+import picard.PicardException;
 import picard.cmdline.CommandLineProgram;
 import picard.cmdline.CommandLineProgramProperties;
 import picard.cmdline.Option;
 import picard.cmdline.StandardOptionDefinitions;
 import picard.cmdline.programgroups.SamOrBam;
+import picard.sam.markduplicates.util.AbstractMarkDuplicatesCommandLineProgram;
+import picard.sam.util.PhysicalLocation;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -47,7 +52,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static java.lang.Math.*;
 
 /**
  * Class to downsample a BAM file while respecting that we should either get rid
@@ -102,20 +106,23 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
     @Option(doc = "Stop after processing N reads, mainly for debugging.")
     public long STOP_AFTER = 0;
 
+    @Option(doc = "Allow Downsampling again despite this being a bad idea with possibly unexpected results.", optional = true)
+    public boolean ALLOW_MULTIPLE_DOWNSAMPLING_DESPITE_WARNINGS = false;
+
     @Option(doc = "Determines whether the duplicate tag should be reset since the downsampling requires re-marking duplicates.")
-    public boolean RESET_DUPLICATE_FLAG = true;
+    public boolean REMOVE_DUPLICATE_INFORMATION = true;
 
     private final Log log = Log.getInstance(PositionBasedDownsampleSam.class);
-
-    private CircleSelector selector = new CircleSelector(PROBABILITY);
 
     private PhysicalLocation opticalDuplicateFinder;
     private long total = 0;
     private long kept = 0;
+    public static String PG_PROGRAM_NAME = "PositionBasedDownsampleSam";
 
-    //max-position in tile as a function of tile. We might need to
-    //look per-readgroup, but at this point I'm making the assumptions that I need to downsample a
-    //sample where all the readgroups came from the same type of flowcell.
+    /* max-position in tile as a function of tile. We might need to
+       look per-readgroup, but at this point I'm making the assumptions that I need to downsample a
+       sample where all the readgroups came from the same type of flowcell. */
+
     private Map<Short, Coord> tileMaxCoord;
 
     final Map<Short, Histogram<Short>> xPositions = new HashMap<Short, Histogram<Short>>();
@@ -133,6 +140,8 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
             errors.add("PROBABILITY must be a value between 0 and 1, found: " + PROBABILITY);
         }
 
+        checkProgramRecords();
+
         IOUtil.assertFileIsReadable(INPUT);
         IOUtil.assertFileIsWritable(OUTPUT);
 
@@ -146,7 +155,17 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
     @Override
     protected int doWork() {
 
-        tileMaxCoord = new CollectionUtil.DefaultingMap<Short,Coord>(new CollectionUtil.DefaultingMap.Factory<Coord, Short>() {
+        if (PROBABILITY < 0 || PROBABILITY > 1) {
+            log.error("PROBABILITY must be a value between 0 and 1, found: " + PROBABILITY);
+            throw new PicardException("Bad input.");
+        }
+
+        checkProgramRecords();
+
+        IOUtil.assertFileIsReadable(INPUT);
+        IOUtil.assertFileIsWritable(OUTPUT);
+
+        tileMaxCoord = new CollectionUtil.DefaultingMap<Short, Coord>(new CollectionUtil.DefaultingMap.Factory<Coord, Short>() {
             @Override
             public Coord make(final Short aShort) {
                 return new Coord();
@@ -155,29 +174,38 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
 
         opticalDuplicateFinder = new PhysicalLocation();
 
-        selector = new CircleSelector(PROBABILITY);
-
         log.info("Starting first pass. Examining read distribution in tiles.");
         fillTileMaxCoord();
         log.info("First pass done.");
 
         log.info("Starting second pass. Outputting reads.");
-        outputRecs();
+        outputSamRecords();
         log.info("Second pass done. ");
 
         final double finalP = kept / (double) total;
-        if (abs(finalP - PROBABILITY) / (Math.min(finalP, PROBABILITY) + 1e-10) > .2) {
+        if (Math.abs(finalP - PROBABILITY) / (Math.min(finalP, PROBABILITY) + 1e-10) > .2) {
             log.warn(String.format("You've requested PROBABILITY=%g, the resulting downsampling resulted in a rate of %f. ", PROBABILITY, finalP));
         }
         log.info(String.format("Finished! Kept %d out of %d reads (P=%g).", kept, total, finalP));
         return 0;
     }
 
-    private void outputRecs() {
+    private void outputSamRecords() {
 
         final ProgressLogger progress = new ProgressLogger(log, (int) 1e7, "Read");
         final SamReader in = SamReaderFactory.makeDefault().referenceSequence(REFERENCE_SEQUENCE).open(INPUT);
-        final SAMFileWriter out = new SAMFileWriterFactory().makeSAMOrBAMWriter(in.getFileHeader(), true, OUTPUT);
+
+
+        final SAMFileHeader header = in.getFileHeader().clone();
+        final AbstractMarkDuplicatesCommandLineProgram.PgIdGenerator pgIdGenerator = new AbstractMarkDuplicatesCommandLineProgram.PgIdGenerator(header);
+        final SAMProgramRecord pr = new SAMProgramRecord(pgIdGenerator.getNonCollidingId(PG_PROGRAM_NAME));
+        pr.setCommandLine(getCommandLine());
+        pr.setProgramVersion(getVersion());
+        header.addProgramRecord(pr);
+
+        final SAMFileWriter out = new SAMFileWriterFactory().makeSAMOrBAMWriter(header, true, OUTPUT);
+
+        final CircleSelector selector = new CircleSelector(PROBABILITY);
 
         for (final SAMRecord rec : in) {
             if (STOP_AFTER != 0 && total >= STOP_AFTER) break;
@@ -186,22 +214,46 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
 
             final PhysicalLocation pos = getSamRecordLocation(rec);
 
-            if (!xPositions.containsKey(pos.getTile()))
+            if (!xPositions.containsKey(pos.getTile())) {
                 xPositions.put(pos.getTile(), new Histogram<Short>(pos.getTile() + "-xpos", "count"));
-            if (!yPositions.containsKey(pos.getTile()))
+            }
+            if (!yPositions.containsKey(pos.getTile())) {
                 yPositions.put(pos.getTile(), new Histogram<Short>(pos.getTile() + "-ypos", "count"));
+            }
 
             final boolean keeper = selector.select(pos, tileMaxCoord.get(pos.getTile()));
 
             if (keeper) {
-                if (RESET_DUPLICATE_FLAG) rec.setDuplicateReadFlag(false);
+                if (REMOVE_DUPLICATE_INFORMATION) rec.setDuplicateReadFlag(false);
                 out.addAlignment(rec);
                 ++kept;
             }
             progress.record(rec);
         }
 
-        out.close();
+        CloserUtil.close(out);
+        CloserUtil.close(in);
+    }
+
+    private void checkProgramRecords() {
+        final SamReader in = SamReaderFactory
+                .makeDefault()
+                .referenceSequence(REFERENCE_SEQUENCE)
+                .open(INPUT);
+
+        for (final SAMProgramRecord pg : in.getFileHeader().getProgramRecords()) {
+            if (pg.getProgramName().equals(PG_PROGRAM_NAME)) {
+
+                final PicardException e = new PicardException("Found previous Program Record that indicates that this BAM has been downsampled already with this program. Operation not supported! Previous PG: " + pg.toString());
+
+                if (ALLOW_MULTIPLE_DOWNSAMPLING_DESPITE_WARNINGS) {
+                    log.warn(e);
+                } else {
+                    log.error(e);
+                    throw e;
+                }
+            }
+        }
         CloserUtil.close(in);
     }
 
@@ -260,22 +312,22 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
                 p = fraction;
                 positiveSelection = true;
             }
-            radiusSquared = p / PI; //thus the area is \pi r^2 = p, thus a fraction p of the unit square will be captured
+            radiusSquared = p / Math.PI; //thus the area is \pi r^2 = p, thus a fraction p of the unit square will be captured
 
             // if offset is used as the center of the circle (both x and y), this makes the overlap
             // region with each of the boundaries of the unit square have length p (and thus a fraction
             // p of the boundaries of each tile will be removed)
-            offset = sqrt(radiusSquared - p * p / 4);
+            offset = Math.sqrt(radiusSquared - p * p / 4);
         }
 
-        private double roundedPart(final double x) {return x - round(x);}
+        private double roundedPart(final double x) {return x - Math.round(x);}
 
         // this function checks to see if the location of the read is within the masking circle
         private boolean select(final PhysicalLocation coord, final Coord tileMaxCoord) {
             // r^2 = (x-x_0)^2 + (y-y_0)^2, where both x_0 and y_0 equal offset
             final double distanceSquared =
-                    pow(roundedPart((coord.x / (double) tileMaxCoord.x) - offset), 2) +
-                            pow(roundedPart((coord.y / (double) tileMaxCoord.y) - offset), 2);
+                    Math.pow(roundedPart((coord.x / (double) tileMaxCoord.x) - offset), 2) +
+                            Math.pow(roundedPart((coord.y / (double) tileMaxCoord.y) - offset), 2);
 
             return (distanceSquared > radiusSquared) ^ positiveSelection;
         }

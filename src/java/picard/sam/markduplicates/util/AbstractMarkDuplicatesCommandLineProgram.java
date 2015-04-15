@@ -181,19 +181,19 @@ public abstract class AbstractMarkDuplicatesCommandLineProgram extends AbstractO
     }
 
     /** Little class to generate program group IDs */
-    static class PgIdGenerator {
+    public static class PgIdGenerator {
         private int recordCounter;
 
         private final Set<String> idsThatAreAlreadyTaken = new HashSet<String>();
 
-        PgIdGenerator(final SAMFileHeader header) {
+        public PgIdGenerator(final SAMFileHeader header) {
             for (final SAMProgramRecord pgRecord : header.getProgramRecords()) {
                 idsThatAreAlreadyTaken.add(pgRecord.getProgramGroupId());
             }
             recordCounter = idsThatAreAlreadyTaken.size();
         }
 
-        String getNonCollidingId(final String recordId) {
+        public String getNonCollidingId(final String recordId) {
             if (!idsThatAreAlreadyTaken.contains(recordId)) {
                 // don't remap 1st record. If there are more records
                 // with this id, they will be remapped in the 'else'.
