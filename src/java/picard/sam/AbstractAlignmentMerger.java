@@ -62,7 +62,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Abstract this is a test of intellij " +
+ * Abstract:
  * class that coordinates the general task of taking in a set of alignment information,
  * possibly in SAM format, possibly in other formats, and merging that with the set of all reads
  * for which alignment was attempted, stored in an unmapped SAM file.
