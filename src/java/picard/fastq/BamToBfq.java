@@ -33,7 +33,7 @@ import picard.cmdline.programgroups.SamOrBam;
 import java.io.File;
 
 /**
- * CommandLineProgram to generate to bfq files for use by the Maq aligner
+ * This tool is used to convert a BAM file to a binary-compressed FASTQ format (BFQ) file for use by the Maq aligner.
  *
  * @author ktibbett@broadinstitute.org
  */

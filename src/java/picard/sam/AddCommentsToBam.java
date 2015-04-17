@@ -15,15 +15,18 @@ import java.io.File;
 import java.util.List;
 
 /**
- * A tool to add comments to a BAM file header. Effectively copies the BAM file except for the addition of the @CO records
- * in the header. This tool does not support SAM files.
+ * Adds one or more comments to the header of a specified BAM file. Copies the file with the modified header to a specified output file. " +
+ * Note that a block copying method is used to ensure efficient transfer to the output file. SAM files are not supported. " +
+ * Output file can be viewed using SamTools using “header” (-H) flag [samtools view -H].  Application example, adding readgroup " +
+ * information to these files.
  *
  * @author jgentry
  */
 @CommandLineProgramProperties(
-        usage = "Adds one or more comments to the header of a specified BAM file. Copies the file with the " +
-                "modified header to a specified output file. Note that a block copying method is used to ensure efficient transfer to the " +
-                "output file. SAM files are not supported",
+        usage = "Adds one or more comments to the header of a specified BAM file. Copies the file with the modified header to a specified " +
+                "output file.  Note that a block copying method is used to ensure efficient transfer to the output file. SAM files are " +
+                "not supported. Output file can be viewed using SamTools using “header” (-H) flag [samtools view -H]. " +
+                "Application example, adding readgroup information to these files. \n",
         usageShort = "Adds comments to the header of a BAM file",
         programGroup = SamOrBam.class
 )

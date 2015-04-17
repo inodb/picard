@@ -25,13 +25,16 @@ import java.io.File;
 import java.util.Arrays;
 
 /**
- * Replaces read groups in a BAM file
+ * Replaces read groups in a BAM file.  This tool is essential when combining data from multiple runs.  It enables ReadGroup-specific " +
+ * analyses including the BQSR tool to incorporate all of the reads into the error model.  Consequently, it facilitates genotype  " +
+ * assignment in variant calling algorithms e.g. the HaplotypeCaller.
  *
  * @author mdepristo
  */
 @CommandLineProgramProperties(
-        usage = "Replaces all read groups in the INPUT file with a single new read group and assigns " +
-                "all reads to this read group in the OUTPUT BAM",
+        usage = "Replaces read groups in a BAM file.  This tool is essential when combining data from multiple runs.  It enables " +
+                "ReadGroup-specific analyses including the BQSR tool to incorporate all of the reads into the error model. " +
+                "Consequently, it facilitates genotype assignment in variant calling algorithms e.g. the HaplotypeCaller. \n ",
         usageShort = "Replaces read groups in a BAM or SAM file with a single new read group",
         programGroup = SamOrBam.class
 )
