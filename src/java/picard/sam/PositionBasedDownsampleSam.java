@@ -43,7 +43,6 @@ import picard.cmdline.CommandLineProgramProperties;
 import picard.cmdline.Option;
 import picard.cmdline.StandardOptionDefinitions;
 import picard.cmdline.programgroups.SamOrBam;
-import picard.sam.markduplicates.util.AbstractMarkDuplicatesCommandLineProgram;
 import picard.sam.util.PhysicalLocation;
 
 import java.io.File;
@@ -123,7 +122,15 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
        look per-readgroup, but at this point I'm making the assumptions that I need to downsample a
        sample where all the readgroups came from the same type of flowcell. */
 
-    private Map<Short, Coord> tileMaxCoord;
+    CollectionUtil.DefaultingMap.Factory<Coord, Short> defaultingMapFactory = new CollectionUtil.DefaultingMap.Factory<Coord, Short>() {
+        @Override
+        public Coord make(final Short aShort) {
+            return new Coord();
+        }
+    };
+
+    final private Map<Short, Coord> tileCoord = new CollectionUtil.DefaultingMap<Short, Coord>(defaultingMapFactory, true);
+
 
     final Map<Short, Histogram<Short>> xPositions = new HashMap<Short, Histogram<Short>>();
     final Map<Short, Histogram<Short>> yPositions = new HashMap<Short, Histogram<Short>>();
@@ -140,11 +147,6 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
             errors.add("PROBABILITY must be a value between 0 and 1, found: " + PROBABILITY);
         }
 
-        checkProgramRecords();
-
-        IOUtil.assertFileIsReadable(INPUT);
-        IOUtil.assertFileIsWritable(OUTPUT);
-
         if (errors.isEmpty()) {
             return null;
         } else {
@@ -155,22 +157,11 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
     @Override
     protected int doWork() {
 
-        if (PROBABILITY < 0 || PROBABILITY > 1) {
-            log.error("PROBABILITY must be a value between 0 and 1, found: " + PROBABILITY);
-            throw new PicardException("Bad input.");
-        }
-
-        checkProgramRecords();
-
         IOUtil.assertFileIsReadable(INPUT);
         IOUtil.assertFileIsWritable(OUTPUT);
 
-        tileMaxCoord = new CollectionUtil.DefaultingMap<Short, Coord>(new CollectionUtil.DefaultingMap.Factory<Coord, Short>() {
-            @Override
-            public Coord make(final Short aShort) {
-                return new Coord();
-            }
-        }, true);
+        log.info("Checking to see if Input file has evidence of having downsampled with this program before.");
+        checkProgramRecords();
 
         opticalDuplicateFinder = new PhysicalLocation();
 
@@ -180,25 +171,26 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
 
         log.info("Starting second pass. Outputting reads.");
         outputSamRecords();
-        log.info("Second pass done. ");
+        log.info("Second pass done.");
 
         final double finalP = kept / (double) total;
         if (Math.abs(finalP - PROBABILITY) / (Math.min(finalP, PROBABILITY) + 1e-10) > .2) {
-            log.warn(String.format("You've requested PROBABILITY=%g, the resulting downsampling resulted in a rate of %f. ", PROBABILITY, finalP));
+            log.warn(String.format("You've requested PROBABILITY=%g, the resulting downsampling resulted in a rate of %f.", PROBABILITY, finalP));
         }
         log.info(String.format("Finished! Kept %d out of %d reads (P=%g).", kept, total, finalP));
+
         return 0;
     }
 
     private void outputSamRecords() {
 
-        final ProgressLogger progress = new ProgressLogger(log, (int) 1e7, "Read");
+        final ProgressLogger progress = new ProgressLogger(log, (int) 1e7);
         final SamReader in = SamReaderFactory.makeDefault().referenceSequence(REFERENCE_SEQUENCE).open(INPUT);
 
-
         final SAMFileHeader header = in.getFileHeader().clone();
-        final AbstractMarkDuplicatesCommandLineProgram.PgIdGenerator pgIdGenerator = new AbstractMarkDuplicatesCommandLineProgram.PgIdGenerator(header);
+        final SAMFileHeader.PgIdGenerator pgIdGenerator = new SAMFileHeader.PgIdGenerator(header);
         final SAMProgramRecord pr = new SAMProgramRecord(pgIdGenerator.getNonCollidingId(PG_PROGRAM_NAME));
+
         pr.setCommandLine(getCommandLine());
         pr.setProgramVersion(getVersion());
         header.addProgramRecord(pr);
@@ -221,17 +213,18 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
                 yPositions.put(pos.getTile(), new Histogram<Short>(pos.getTile() + "-ypos", "count"));
             }
 
-            final boolean keeper = selector.select(pos, tileMaxCoord.get(pos.getTile()));
+            final boolean keepRecord = selector.select(pos, tileCoord.get(pos.getTile()));
 
-            if (keeper) {
+            if (keepRecord) {
                 if (REMOVE_DUPLICATE_INFORMATION) rec.setDuplicateReadFlag(false);
                 out.addAlignment(rec);
-                ++kept;
+                kept++;
             }
             progress.record(rec);
         }
 
-        CloserUtil.close(out);
+        out.close();
+
         CloserUtil.close(in);
     }
 
@@ -274,17 +267,33 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
             final PhysicalLocation location = getSamRecordLocation(rec);
 
             //Defaulting map will create a new Coord if it's not there.
-            final Coord maxPos = tileMaxCoord.get(location.getTile());
-            maxPos.x = Math.max(maxPos.x, location.getX());
-            maxPos.y = Math.max(maxPos.y, location.getY());
-            maxPos.count++;
+
+            final Coord Pos = tileCoord.get(location.getTile());
+
+            Pos.maxX = Math.max(Pos.maxX, location.getX());
+            Pos.minX = Math.min(Pos.minX, location.getX());
+
+            Pos.maxY = Math.max(Pos.maxY, location.getY());
+            Pos.minY = Math.min(Pos.minY, location.getY());
+
+            Pos.count++;
+
         }
 
-        // now that we know what the maximal number was, we should increase it a bit, to account for sampling error
-        for (final Coord coord : tileMaxCoord.values()) {
-            coord.x *= (coord.count + 1d) / coord.count;
-            coord.y *= (coord.count + 1d) / coord.count;
+        // now that we know what the maximal/minimal numbers were, we should increase/decrease them a little, to account for sampling error
+        for (final Coord coord : tileCoord.values()) {
+
+            final int diffX = coord.maxX - coord.minX;
+            final int diffY = coord.maxY - coord.minY;
+
+            coord.maxX += diffX  / coord.count;
+            coord.minX -= diffX  / coord.count;
+
+            coord.maxY += diffY  / coord.count;
+            coord.minY -= diffY  / coord.count;
         }
+
+
         CloserUtil.close(in);
     }
 
@@ -314,34 +323,39 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
             }
             radiusSquared = p / Math.PI; //thus the area is \pi r^2 = p, thus a fraction p of the unit square will be captured
 
-            // if offset is used as the center of the circle (both x and y), this makes the overlap
-            // region with each of the boundaries of the unit square have length p (and thus a fraction
-            // p of the boundaries of each tile will be removed)
+            /* if offset is used as the center of the circle (both x and y), this makes the overlap
+             region with each of the boundaries of the unit square have length p (and thus a fraction
+             p of the boundaries of each tile will be removed) */
+
             offset = Math.sqrt(radiusSquared - p * p / 4);
         }
 
         private double roundedPart(final double x) {return x - Math.round(x);}
 
         // this function checks to see if the location of the read is within the masking circle
-        private boolean select(final PhysicalLocation coord, final Coord tileMaxCoord) {
+        private boolean select(final PhysicalLocation coord, final Coord tileCoord) {
             // r^2 = (x-x_0)^2 + (y-y_0)^2, where both x_0 and y_0 equal offset
             final double distanceSquared =
-                    Math.pow(roundedPart((coord.x / (double) tileMaxCoord.x) - offset), 2) +
-                            Math.pow(roundedPart((coord.y / (double) tileMaxCoord.y) - offset), 2);
+                            Math.pow(roundedPart(((coord.x - tileCoord.minX) / (double) (tileCoord.maxX - tileCoord.minX)) - offset), 2) +
+                            Math.pow(roundedPart(((coord.y - tileCoord.minY) / (double) (tileCoord.maxY - tileCoord.minY)) - offset), 2);
 
             return (distanceSquared > radiusSquared) ^ positiveSelection;
         }
     }
 
     private class Coord {
-        public int x;
-        public int y;
+        public int minX;
+        public int minY;
+        public int maxX;
+        public int maxY;
         public int count;
 
         public Coord() {
             count = 0;
-            x = 0;
-            y = 0;
+            minX = 0;
+            minY = 0;
+            maxX = 0;
+            maxY = 0;
         }
     }
 }
