@@ -160,7 +160,7 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
         IOUtil.assertFileIsReadable(INPUT);
         IOUtil.assertFileIsWritable(OUTPUT);
 
-        log.info("Checking to see if Input file has evidence of having downsampled with this program before.");
+        log.info("Checking to see if input file has been downsampled with this program before.");
         checkProgramRecords();
 
         opticalDuplicateFinder = new PhysicalLocation();
