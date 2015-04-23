@@ -305,7 +305,7 @@ public abstract class AbstractMarkDuplicatesCommandLineProgram extends AbstractO
      * Looks through the set of reads and identifies how many of the duplicates are
      * in fact optical duplicates, and stores the data in the instance level histogram.
      */
-    private static void trackOpticalDuplicates(final List<? extends OpticalDuplicateFinder.PhysicalLocation> list,
+    protected static void trackOpticalDuplicates(final List<? extends OpticalDuplicateFinder.PhysicalLocation> list,
                                                final OpticalDuplicateFinder opticalDuplicateFinder,
                                                final Histogram<Short> opticalDuplicatesByLibraryId) {
         final boolean[] opticalDuplicateFlags = opticalDuplicateFinder.findOpticalDuplicates(list);
