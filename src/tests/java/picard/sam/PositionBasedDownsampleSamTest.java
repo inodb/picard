@@ -66,6 +66,7 @@ public class PositionBasedDownsampleSamTest extends CommandLineProgramTest {
         //use fixed random seed to eliminate possibility of intermittent failures
         final Random rg = new Random(31);
         setBuilder.setReadGroup(readGroupRecord);
+        setBuilder.setUseNmFlag(true);
 
         for (int i = 0; i < numReads; i++) {
             final int x = rg.nextInt(maxX) + minX;
