@@ -166,7 +166,7 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
         opticalDuplicateFinder = new PhysicalLocation();
 
         log.info("Starting first pass. Examining read distribution in tiles.");
-        fillTileMaxCoord();
+        fillTileMinMaxCoord();
         log.info("First pass done.");
 
         log.info("Starting second pass. Outputting reads.");
@@ -191,6 +191,7 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
         final SAMFileHeader.PgIdGenerator pgIdGenerator = new SAMFileHeader.PgIdGenerator(header);
         final SAMProgramRecord pr = new SAMProgramRecord(pgIdGenerator.getNonCollidingId(PG_PROGRAM_NAME));
 
+        pr.setProgramName(PG_PROGRAM_NAME);
         pr.setCommandLine(getCommandLine());
         pr.setProgramVersion(getVersion());
         header.addProgramRecord(pr);
@@ -235,23 +236,23 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
                 .open(INPUT);
 
         for (final SAMProgramRecord pg : in.getFileHeader().getProgramRecords()) {
-            if (pg.getProgramName().equals(PG_PROGRAM_NAME)) {
+            if (pg.getProgramName() != null && pg.getProgramName().equals(PG_PROGRAM_NAME)) {
 
-                final PicardException e = new PicardException("Found previous Program Record that indicates that this BAM has been downsampled already with this program. Operation not supported! Previous PG: " + pg.toString());
+                String outText = "Found previous Program Record that indicates that this BAM has been downsampled already with this program. Operation not supported! Previous PG: " + pg.toString();
 
                 if (ALLOW_MULTIPLE_DOWNSAMPLING_DESPITE_WARNINGS) {
-                    log.warn(e);
+                    log.warn(outText);
                 } else {
-                    log.error(e);
-                    throw e;
+                    log.error(outText);
+                    throw new PicardException(outText);
                 }
             }
         }
         CloserUtil.close(in);
     }
 
-    // scan all the tiles and find the largest coordinate (x & y) in that tile.
-    private void fillTileMaxCoord() {
+    // scan all the tiles and find the smallest and largest coordinate (x & y) in that tile.
+    private void fillTileMinMaxCoord() {
 
         final SamReader in = SamReaderFactory.makeDefault().referenceSequence(REFERENCE_SEQUENCE).open(INPUT);
 
@@ -286,13 +287,12 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
             final int diffX = coord.maxX - coord.minX;
             final int diffY = coord.maxY - coord.minY;
 
-            coord.maxX += diffX  / coord.count;
-            coord.minX -= diffX  / coord.count;
+            coord.maxX += diffX / coord.count;
+            coord.minX -= diffX / coord.count;
 
-            coord.maxY += diffY  / coord.count;
-            coord.minY -= diffY  / coord.count;
+            coord.maxY += diffY / coord.count;
+            coord.minY -= diffY / coord.count;
         }
-
 
         CloserUtil.close(in);
     }
