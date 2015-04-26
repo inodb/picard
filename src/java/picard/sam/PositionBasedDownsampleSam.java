@@ -55,19 +55,19 @@ import java.util.Map;
 /**
  * Class to downsample a BAM file while respecting that we should either get rid
  * of both ends of a pair or neither end of the pair. In addition, this program uses the read-name
- * and extracts the position within the tile from whence the read came from. The downsampling is based on this position.
+ * and extracts the position within the tile whence the read came from. The downsampling is based on this position.
  * <p/>
- * Note 1: This is technology and read-name dependent. if your read-names do not have coordinate information, or if your
+ * Note 1: This is technology and read-name dependent. If your read-names do not have coordinate information, or if your
  * BAM contains reads from multiple technologies (flowcell versions, sequencing machines) this will not work properly.
  * This has been designed with Illumina MiSeq/HiSeq in mind.
  * <p/>
- * Note 2: The downsampling is _not_ random. It is deterministically dependent on the position of the read within its tile. specifically,
- * it draws out an ellipse that covers a PROBABILITY fraction of the area and each of the edges and uses this to determine whether to keep the
+ * Note 2: The downsampling is _not_ random. It is deterministically dependent on the position of the read within its tile. Specifically,
+ * it draws out an ellipse that covers a FRACTION fraction of the area and each of the edges and uses this to determine whether to keep the
  * record. Since reads with the same name have the same position (mates, secondary and supplemental alignments), the decision will be the same for all of them.
  * <p/>
  * Finally, the code has been designed to simulate sequencing less as accurately as possible, not for getting an exact downsample fraction.
  * In particular, since the reads may be distributed non-evenly within the lanes/tiles, the resulting downsampling percentage will not be accurately
- * determined by the input argument PROBABILITY. One should re-MarkDuplicates after downsampling in order to "expose" the duplicates who's representative has
+ * determined by the input argument FRACTION. One should re-MarkDuplicates after downsampling in order to "expose" the duplicates whose representative has
  * been downsampled away.
  *
  * @author Yossi Farjoun
@@ -75,20 +75,20 @@ import java.util.Map;
 @CommandLineProgramProperties(
         usage = "Class to downsample a BAM file while respecting that we should either get rid\n" +
                 "of both ends of a pair or neither end of the pair. In addition, this program uses the read-name \n" +
-                "and extracts the position within the tile from whence the read came from. THe downsampling is based on this position. \n" +
+                "and extracts the position within the tile from whence the read came from. The downsampling is based on this position. \n" +
                 "results with the exact same input will produce the same results.\n" +
                 "\n" +
-                "<it>Note 1</it>: This is technology and read-name dependent. if your read-names do not have coordinate information, or if your\n" +
+                "Note 1: This is technology and read-name dependent. If your read-names do not have coordinate information, or if your\n" +
                 "BAM contains reads from multiple technologies (flowcell versions, sequencing machines) this will not work properly. \n" +
                 "This has been designed with Illumina MiSeq/HiSeq in mind.\n" +
-                "<it>Note 2</it>: The downsampling is _not_ random. It is deterministically dependent on the position of the read within its tile." +
-                "<it>Note 3</it>: Downsampling twice with this program is not supported." +
-                "<it>Note 4</it>: You should MarkDuplicates after downsampling." +
+                "Note 2: The downsampling is not random. It is deterministically dependent on the position of the read within its tile.\n" +
+                "Note 3: Downsampling twice with this program is not supported.\n" +
+                "Note 4: You should call MarkDuplicates after downsampling.\n" +
                 "\n" +
                 "Finally, the code has been designed to simulate sequencing less as accurately as possible, not for getting an exact downsample fraction. " +
                 "In particular, since the reads may be distributed non-evenly within the lanes/tiles, the resulting downsampling percentage will not be accurately" +
-                "determined by the input argument PROBABILITY.",
-        usageShort = "Down-sample a SAM or BAM file to retain a subset of the reads based on the reads location in each tile in the flowcell.",
+                "determined by the input argument FRACTION.",
+        usageShort = "Downsample a SAM or BAM file to retain a subset of the reads based on the reads location in each tile in the flowcell.",
         programGroup = SamOrBam.class
 )
 public class PositionBasedDownsampleSam extends CommandLineProgram {
@@ -99,11 +99,11 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
     @Option(shortName = StandardOptionDefinitions.OUTPUT_SHORT_NAME, doc = "The output, downsampled, SAM or BAM file to write.")
     public File OUTPUT;
 
-    @Option(shortName = StandardOptionDefinitions.PROBABILITY_SHORT_NAME, doc = "The (approximate) probability of keeping a read, between 0 and 1.")
-    public double PROBABILITY = 1;
+    @Option(shortName = "F", doc = "The (approximate) fraction of reads to be kept, between 0 and 1.", optional = false)
+    public Double FRACTION = null;
 
-    @Option(doc = "Stop after processing N reads, mainly for debugging.")
-    public long STOP_AFTER = 0;
+    @Option(doc = "Stop after processing N reads, mainly for debugging.", optional = true)
+    public Long STOP_AFTER = null;
 
     @Option(doc = "Allow Downsampling again despite this being a bad idea with possibly unexpected results.", optional = true)
     public boolean ALLOW_MULTIPLE_DOWNSAMPLING_DESPITE_WARNINGS = false;
@@ -117,6 +117,7 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
     private long total = 0;
     private long kept = 0;
     public static String PG_PROGRAM_NAME = "PositionBasedDownsampleSam";
+    private final static double ACCEPTABLE_FUDGE_FACTOR = 0.2;
 
     /* max-position in tile as a function of tile. We might need to
        look per-readgroup, but at this point I'm making the assumptions that I need to downsample a
@@ -143,8 +144,8 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
     protected String[] customCommandLineValidation() {
         final List<String> errors = new ArrayList<String>();
 
-        if (PROBABILITY < 0 || PROBABILITY > 1) {
-            errors.add("PROBABILITY must be a value between 0 and 1, found: " + PROBABILITY);
+        if (FRACTION < 0 || FRACTION > 1) {
+            errors.add("FRACTION must be a value between 0 and 1, found: " + FRACTION);
         }
 
         if (errors.isEmpty()) {
@@ -174,8 +175,8 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
         log.info("Second pass done.");
 
         final double finalP = kept / (double) total;
-        if (Math.abs(finalP - PROBABILITY) / (Math.min(finalP, PROBABILITY) + 1e-10) > .2) {
-            log.warn(String.format("You've requested PROBABILITY=%g, the resulting downsampling resulted in a rate of %f.", PROBABILITY, finalP));
+        if (Math.abs(finalP - FRACTION) / (Math.min(finalP, FRACTION) + 1e-10) > ACCEPTABLE_FUDGE_FACTOR) {
+            log.warn(String.format("You've requested FRACTION=%g, the resulting downsampling resulted in a rate of %f.", FRACTION, finalP));
         }
         log.info(String.format("Finished! Kept %d out of %d reads (P=%g).", kept, total, finalP));
 
@@ -189,19 +190,19 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
 
         final SAMFileHeader header = in.getFileHeader().clone();
         final SAMFileHeader.PgIdGenerator pgIdGenerator = new SAMFileHeader.PgIdGenerator(header);
-        final SAMProgramRecord pr = new SAMProgramRecord(pgIdGenerator.getNonCollidingId(PG_PROGRAM_NAME));
+        final SAMProgramRecord programRecord = new SAMProgramRecord(pgIdGenerator.getNonCollidingId(PG_PROGRAM_NAME));
 
-        pr.setProgramName(PG_PROGRAM_NAME);
-        pr.setCommandLine(getCommandLine());
-        pr.setProgramVersion(getVersion());
-        header.addProgramRecord(pr);
+        programRecord.setProgramName(PG_PROGRAM_NAME);
+        programRecord.setCommandLine(getCommandLine());
+        programRecord.setProgramVersion(getVersion());
+        header.addProgramRecord(programRecord);
 
         final SAMFileWriter out = new SAMFileWriterFactory().makeSAMOrBAMWriter(header, true, OUTPUT);
 
-        final CircleSelector selector = new CircleSelector(PROBABILITY);
+        final CircleSelector selector = new CircleSelector(FRACTION);
 
         for (final SAMRecord rec : in) {
-            if (STOP_AFTER != 0 && total >= STOP_AFTER) break;
+            if (STOP_AFTER != null && total >= STOP_AFTER) break;
 
             total++;
 
@@ -238,7 +239,7 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
         for (final SAMProgramRecord pg : in.getFileHeader().getProgramRecords()) {
             if (pg.getProgramName() != null && pg.getProgramName().equals(PG_PROGRAM_NAME)) {
 
-                String outText = "Found previous Program Record that indicates that this BAM has been downsampled already with this program. Operation not supported! Previous PG: " + pg.toString();
+                final String outText = "Found previous Program Record that indicates that this BAM has been downsampled already with this program. Operation not supported! Previous PG: " + pg.toString();
 
                 if (ALLOW_MULTIPLE_DOWNSAMPLING_DESPITE_WARNINGS) {
                     log.warn(outText);
@@ -261,7 +262,7 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
         int total = 0;
 
         for (final SAMRecord rec : in) {
-            if (STOP_AFTER != 0 && total >= STOP_AFTER) break;
+            if (STOP_AFTER != null && total >= STOP_AFTER) break;
 
             total++;
             progress.record(rec);
@@ -310,8 +311,6 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
         private final boolean positiveSelection;
 
         CircleSelector(final double fraction) {
-            assert (fraction >= 0);
-            assert (fraction <= 1);
 
             final double p;
             if (fraction > 0.5) {
@@ -327,6 +326,10 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
              region with each of the boundaries of the unit square have length p (and thus a fraction
              p of the boundaries of each tile will be removed) */
 
+            if (p < 0) {
+                // at this point a negative p will result in a square-root of a negative number in the next step.
+                throw new PicardException("This shouldn't happen...");
+            }
             offset = Math.sqrt(radiusSquared - p * p / 4);
         }
 

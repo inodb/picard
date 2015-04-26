@@ -47,7 +47,7 @@ import java.util.regex.Pattern;
  */
 public class PhysicalLocation {
 
-    public static final String DEFAULT_READ_NAME_REGEX = OpticalDuplicateFinder.DEFAULT_READ_NAME_REGEX;
+    public static final String DEFAULT_READ_NAME_REGEX = "[a-zA-Z0-9]+:[0-9]:([0-9]+):([0-9]+):([0-9]+).*".intern();
 
     private final String readNameRegex;
 
@@ -61,15 +61,15 @@ public class PhysicalLocation {
     public int x = -1, y = -1;
 
 
-    public short getTile() { return this.tile; }
+    public short getTile() { return tile; }
 
     public void setTile(final short tile) { this.tile = tile; }
 
-    public int getX() { return this.x; }
+    public int getX() { return x; }
 
     public void setX(final int x) { this.x = x; }
 
-    public int getY() { return this.y; }
+    public int getY() { return y; }
 
     public void setY(final int y) { this.y = y; }
 
@@ -86,7 +86,7 @@ public class PhysicalLocation {
      */
     public boolean addLocationInformation(final String readName, final PhysicalLocation loc) {
         // Optimized version if using the default read name regex (== used on purpose):
-        if (this.readNameRegex == this.DEFAULT_READ_NAME_REGEX) {
+        if (readNameRegex == DEFAULT_READ_NAME_REGEX) {
             final int fields = ReadNameParsingUtils.getRapidDefaultReadNameRegexSplit(readName, ':', tmpLocationFields);
             if (!(fields == 5 || fields == 7)) {
                 throw new PicardException(String.format(" READ_NAME_REGEX '%s' did not match read name '%s'.  " ,
@@ -98,20 +98,20 @@ public class PhysicalLocation {
             loc.setX(tmpLocationFields[offset + 3]);
             loc.setY(tmpLocationFields[offset + 4]);
             return true;
-        } else if (this.readNameRegex == null) {
+        } else if (readNameRegex == null) {
             return false;
         } else {
             // Standard version that will use the regex
-            if (this.readNamePattern == null) this.readNamePattern = Pattern.compile(this.readNameRegex);
+            if (readNamePattern == null) readNamePattern = Pattern.compile(readNameRegex);
 
-            final Matcher m = this.readNamePattern.matcher(readName);
+            final Matcher m = readNamePattern.matcher(readName);
             if (m.matches()) {
                 loc.setTile((short) Integer.parseInt(m.group(1)));
                 loc.setX(Integer.parseInt(m.group(2)));
                 loc.setY(Integer.parseInt(m.group(3)));
                 return true;
             } else {
-                throw new PicardException(String.format("READ_NAME_REGEX '%s' did not match read name '%s'. ", this.readNameRegex, readName));
+                throw new PicardException(String.format("READ_NAME_REGEX '%s' did not match read name '%s'. ", readNameRegex, readName));
             }
         }
     }

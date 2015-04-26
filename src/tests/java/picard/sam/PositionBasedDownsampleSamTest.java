@@ -142,7 +142,7 @@ public class PositionBasedDownsampleSamTest extends CommandLineProgramTest {
         final String[] args = new String[]{
                 "INPUT=" + samFile.getAbsolutePath(),
                 "OUTPUT=" + downsampled.getAbsolutePath(),
-                "PROBABILITY=" + fraction,
+                "FRACTION=" + fraction,
                 "CREATE_INDEX=true"
         };
 
@@ -188,7 +188,7 @@ public class PositionBasedDownsampleSamTest extends CommandLineProgramTest {
         final String[] args1 = new String[]{
                 "INPUT=" + samFile.getAbsolutePath(),
                 "OUTPUT=" + downsampled.getAbsolutePath(),
-                "PROBABILITY=" + fraction
+                "FRACTION=" + fraction
         };
         runPicardCommandLine(args1);
 
@@ -199,7 +199,7 @@ public class PositionBasedDownsampleSamTest extends CommandLineProgramTest {
 
         args2.add("INPUT=" + downsampled.getAbsolutePath());
         args2.add("OUTPUT=" + downsampledTwice.getAbsolutePath());
-        args2.add("PROBABILITY=" + fraction);
+        args2.add("FRACTION=" + fraction);
 
         if(allowMultiple) args2.add("ALLOW_MULTIPLE_DOWNSAMPLING_DESPITE_WARNINGS=true");
 
@@ -230,7 +230,7 @@ public class PositionBasedDownsampleSamTest extends CommandLineProgramTest {
         final String[] args = new String[]{
                 "INPUT=" + samFile.getAbsolutePath(),
                 "OUTPUT=" + downsampled.getAbsolutePath(),
-                "PROBABILITY=" + fraction
+                "FRACTION=" + fraction
         };
         //should blow up due to bad inputs
         assert runPicardCommandLine(args) != 0;
