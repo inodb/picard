@@ -73,10 +73,10 @@ import java.util.Map;
  * @author Yossi Farjoun
  */
 @CommandLineProgramProperties(
-        usage = "Class to downsample a BAM file while respecting that we should either get rid\n" +
-                "of both ends of a pair or neither end of the pair. In addition, this program uses the read-name \n" +
-                "and extracts the position within the tile whence the read came from. The downsampling is based on this position. \n" +
-                "results with the exact same input will produce the same results.\n" +
+        usage = "Class to downsample a BAM file while respecting that we should either get rid of both ends of a pair or neither \n" +
+                "end of the pair. In addition, this program uses the read-name and extracts the position within the tile whence \n" +
+                "the read came from. The downsampling is based on this position. Results with the exact same input will produce the \n" +
+                "same results.\n" +
                 "\n" +
                 "Note 1: This is technology and read-name dependent. If your read-names do not have coordinate information, or if your\n" +
                 "BAM contains reads from multiple technologies (flowcell versions, sequencing machines) this will not work properly. \n" +
@@ -85,9 +85,9 @@ import java.util.Map;
                 "Note 3: Downsampling twice with this program is not supported.\n" +
                 "Note 4: You should call MarkDuplicates after downsampling.\n" +
                 "\n" +
-                "Finally, the code has been designed to simulate sequencing less as accurately as possible, not for getting an exact downsample fraction. " +
-                "In particular, since the reads may be distributed non-evenly within the lanes/tiles, the resulting downsampling percentage will not be accurately" +
-                "determined by the input argument FRACTION.",
+                "Finally, the code has been designed to simulate sequencing less as accurately as possible, not for getting an exact downsample \n" +
+                "fraction. In particular, since the reads may be distributed non-evenly within the lanes/tiles, the resulting downsampling \n" +
+                "percentage will not be accurately determined by the input argument FRACTION.",
         usageShort = "Downsample a SAM or BAM file to retain a subset of the reads based on the reads location in each tile in the flowcell.",
         programGroup = SamOrBam.class
 )
