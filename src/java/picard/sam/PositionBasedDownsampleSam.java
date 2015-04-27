@@ -75,7 +75,7 @@ import java.util.Map;
 @CommandLineProgramProperties(
         usage = "Class to downsample a BAM file while respecting that we should either get rid\n" +
                 "of both ends of a pair or neither end of the pair. In addition, this program uses the read-name \n" +
-                "and extracts the position within the tile from whence the read came from. The downsampling is based on this position. \n" +
+                "and extracts the position within the tile whence the read came from. The downsampling is based on this position. \n" +
                 "results with the exact same input will produce the same results.\n" +
                 "\n" +
                 "Note 1: This is technology and read-name dependent. If your read-names do not have coordinate information, or if your\n" +
@@ -304,6 +304,22 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
         return pos;
     }
 
+    /*
+     * The reads are selected depending on whether they are in a periodically repeating circle whose representative
+     * overlaps the boundary of the tile. The circle is chosen as to have an area of FRACTION and the also a overlap
+     * of FRACTION with both the bottom and left edges of the unit square ([0,1] x [0,1]), which defines it uniquely.
+     * Finally the repeating pattern is there to make sure that the mask on the flowcell also has minimal boundary.
+     *
+     * The position of the reads is mapped into the unit square using the min/max coordinates of the tile prior to
+     * masking
+     *
+     * This choice of a mask is intended to accomplish several goasl:
+     *  - pick out a fraction FRACTION of the reads
+     *  - pick out a fraction FRACTION of the reads that are near the boundaries
+     *  - keep nearby reads (in a tile) together by minimizing the boundary of the mask itself
+     *  - keep nearby reads (in neighboring tiles) together (since they might be optical duplicates) by keeping that the
+     *  mask is the same on all tiles, and by having the same mask on the left edge as on the right (same for top/bottom).
+     */
     private class CircleSelector {
 
         private final double radiusSquared;
