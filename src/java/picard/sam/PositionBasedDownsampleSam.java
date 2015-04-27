@@ -339,8 +339,8 @@ public class PositionBasedDownsampleSam extends CommandLineProgram {
         private boolean select(final PhysicalLocation coord, final Coord tileCoord) {
             // r^2 = (x-x_0)^2 + (y-y_0)^2, where both x_0 and y_0 equal offset
             final double distanceSquared =
-                            Math.pow(roundedPart(((coord.x - tileCoord.minX) / (double) (tileCoord.maxX - tileCoord.minX)) - offset), 2) +
-                            Math.pow(roundedPart(((coord.y - tileCoord.minY) / (double) (tileCoord.maxY - tileCoord.minY)) - offset), 2);
+                            Math.pow(roundedPart(((coord.getX() - tileCoord.minX) / (double) (tileCoord.maxX - tileCoord.minX)) - offset), 2) +
+                            Math.pow(roundedPart(((coord.getY() - tileCoord.minY) / (double) (tileCoord.maxY - tileCoord.minY)) - offset), 2);
 
             return (distanceSquared > radiusSquared) ^ positiveSelection;
         }

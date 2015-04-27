@@ -46,8 +46,8 @@ import java.util.regex.Pattern;
  * thus, they do not overflow within a HiSeqX tile.
  */
 public class PhysicalLocation {
-
-    public static final String DEFAULT_READ_NAME_REGEX = "[a-zA-Z0-9]+:[0-9]:([0-9]+):([0-9]+):([0-9]+).*".intern();
+                                                        //FLOWCELL----:LANE-:TILE----:X_COORD-:Y_COORD-UNK
+    public static final String DEFAULT_READ_NAME_REGEX = "[a-zA-Z0-9]+:[0-9]:([0-9]+):([0-9]+):([0-9]+).*";
 
     private final String readNameRegex;
 
@@ -57,8 +57,8 @@ public class PhysicalLocation {
 
     private Pattern readNamePattern;
 
-    public short tile = -1;
-    public int x = -1, y = -1;
+    private short tile = -1;
+    private int x = -1, y = -1;
 
 
     public short getTile() { return tile; }

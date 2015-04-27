@@ -32,7 +32,7 @@ public class ReadNameParsingUtils {
      * Single pass method to parse the read name for the default regex.  This will only insert the 2nd to the 4th
      * tokens (inclusive).  It will also stop after the fifth token has been successfully parsed.
      */
-    static public int getRapidDefaultReadNameRegexSplit(final String readName, final char delim, final int[] tokens) {
+    public static int getRapidDefaultReadNameRegexSplit(final String readName, final char delim, final int[] tokens) {
         int tokensIdx = 0;
         int prevIdx = 0;
         for (int i = 0; i < readName.length(); i++) {
@@ -56,7 +56,7 @@ public class ReadNameParsingUtils {
      * Very specialized method to rapidly parse a sequence of digits from a String up until the first
      * non-digit character.
      */
-    static public int rapidParseInt(final String input) {
+    public static int rapidParseInt(final String input) {
         final int len = input.length();
         int val = 0;
         int i = 0;
